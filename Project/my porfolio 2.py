@@ -225,8 +225,13 @@ def _(cap_slider, df_final, sector_dropdown):
 
 @app.cell
 async def _(micropip):
-    # Await installation of plotly and requests in the WASM environment
-    await micropip.install(['plotly', 'requests', 'yfinance', 'pypdf'])
+    # Await installation of packages in the WASM environment
+    # Install each package individually so one failure doesn't block the rest
+    for _pkg in ['plotly', 'requests', 'yfinance', 'pypdf']:
+        try:
+            await micropip.install(_pkg)
+        except Exception:
+            pass  # package unavailable in this Pyodide build — continue
 
     # Patch requests to work inside the browser (WASM / pyodide environment)
     # pyodide_http re-routes requests through XMLHttpRequest so HTTP calls work client-side
@@ -616,6 +621,8 @@ def _(
         mo.md("My two main hobbies are Travel and Fashion. The exploration of different cultures and styles inspires me both personally and professionally."),
         mo.md("*   *I take pride in the fact that I've been able to travel as much as I have, seeing most of europe has shown me a lot of different cultures and introduced me to people and cuisine that I would never had imagined earlier."),
         mo.ui.plotly(fig_travel),
+        mo.md("## Fashion"),
+        mo.md("I take a great interest in fashion, this interest arose when i started working within the fashion industry. Ive had nothing but good experiences within that industry and it has tought me a lot about how to communicate with people. in addition to that it has allowed me to travel to places and attend events i would never have imagined id find myself at.")
     ])
     return tab_csv, tab_passion_projects, tab_personal
 
