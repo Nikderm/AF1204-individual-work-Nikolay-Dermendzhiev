@@ -6,7 +6,6 @@
 #     "plotly>=6.5.1",
 #     "pyarrow>=22.0.0",
 #     "pyodide-http>=0.2.2",
-#     "pyzmq>=27.1.0",
 #     "requests>=2.33.1",
 #     "tabulate>=0.10.0",
 #     "yfinance>=0.2.54",
@@ -188,14 +187,16 @@ def _(df_airlines, df_final, mo):
     )
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+async def _(micropip):
     # Await installation of packages in the WASM environment
     # Install each package individually so one failure doesn't block the rest
     if micropip is not None:
         for _pkg in ['plotly', 'requests', 'yfinance', 'pypdf']:
             try:
-                    await micropip.install(_pkg, keep_going=True)
+                await micropip.install(_pkg, keep_going=True)
+            except Exception:
+                pass
     # pyodide_http re-routes requests through XMLHttpRequest so HTTP calls work client-side
     try:
         import pyodide_http
@@ -209,9 +210,7 @@ app._unparsable_cell(
         import yfinance as yf
     except ImportError:
         yf = None  # yfinance not available in this environment
-    """,
-    name="_"
-)
+    return px, requests, yf
 
 
 @app.cell
