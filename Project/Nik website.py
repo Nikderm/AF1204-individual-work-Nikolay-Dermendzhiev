@@ -625,25 +625,41 @@ def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
                 last_err = _e
         raise RuntimeError(f"All CORS proxies failed: {last_err}")
 
+    def _finnhub_get(endpoint, api_key):
+        """Fetch a Finnhub endpoint, trying direct then via CORS proxies, return parsed JSON."""
+        url = f"https://finnhub.io/api/v1/{endpoint}&token={api_key}"
+        # Try direct first (works if Finnhub allows the origin)
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200 and r.text and r.text.strip():
+                return r.json()
+        except Exception:
+            pass
+        # Fall back through CORS proxies
+        for _make_url in _CORS_PROXIES:
+            try:
+                r = requests.get(_make_url(url), timeout=15)
+                if r.status_code == 200 and r.text and r.text.strip():
+                    return r.json()
+            except Exception:
+                continue
+        raise RuntimeError(f"Could not reach Finnhub endpoint: {endpoint[:40]}")
+
     def _get_info_finnhub(ticker, api_key):
-        """Fetch key stats from Finnhub using token query param (reliable in browser)."""
-        base = "https://finnhub.io/api/v1"
-        _t = f"token={api_key}"
+        """Fetch key stats from Finnhub."""
+        profile = _finnhub_get(f"stock/profile2?symbol={ticker}", api_key)
+        quote   = _finnhub_get(f"quote?symbol={ticker}", api_key)
         try:
-            profile = requests.get(f"{base}/stock/profile2?symbol={ticker}&{_t}", timeout=10).json()
-        except Exception:
-            profile = {}
-        try:
-            quote = requests.get(f"{base}/quote?symbol={ticker}&{_t}", timeout=10).json()
-        except Exception:
-            quote = {}
-        try:
-            metric_r = requests.get(f"{base}/stock/metric?symbol={ticker}&metric=all&{_t}", timeout=10).json()
+            metric_r = _finnhub_get(f"stock/metric?symbol={ticker}&metric=all", api_key)
             m = metric_r.get("metric") or {}
         except Exception:
             m = {}
         if not quote.get("c"):
-            raise RuntimeError(f"Finnhub returned no data for {ticker} (profile keys: {list(profile.keys())})")
+            raise RuntimeError(
+                f"Finnhub: no price data for '{ticker}'. "
+                f"Check the ticker is valid on Finnhub (US tickers work best). "
+                f"Quote response: {quote}"
+            )
         return {
             "currency":           profile.get("currency", "USD"),
             "currentPrice":       quote.get("c"),
