@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+.venv-*/
+venv/
+env/
+
+# Marimo session state
+**/__marimo__/session/
+
+# OS
+.DS_Store
+Thumbs.db
