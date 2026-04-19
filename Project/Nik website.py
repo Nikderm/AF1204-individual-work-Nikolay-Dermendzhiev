@@ -572,7 +572,12 @@ def _(df_airlines, df_final, mo, pd, search_input):
     search_panel = mo.vstack([
         mo.md("## 🔍 Search Companies"),
         mo.md("Search across the S&P 500 and European Airlines datasets. **Click a row** to load the company\'s live financials."),
-        search_input,
+        mo.hstack([search_input, finnhub_api_key], justify="start", gap=2),
+        mo.callout(mo.md(
+            "To see full statistics (P/E, revenue, debt, etc.) when Yahoo Finance is unavailable, "
+            "add a free **Finnhub API key** above — get one at [finnhub.io/register](https://finnhub.io/register). "
+            "Your key is used client-side only and never stored."
+        ), kind="info"),
         count_msg,
         search_table if search_table is not None else mo.md(""),
     ])
@@ -580,7 +585,7 @@ def _(df_airlines, df_final, mo, pd, search_input):
 
 
 @app.cell
-def _(mo, pd, pdf_upload, px, requests, search_table, yf):
+def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
     # 5d-B: Company detail panel — reacts whenever the user selects a row
 
     import sys as _sys
@@ -652,7 +657,13 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
                 _last_err = f"Empty result from {_host} (keys: {list(data.keys())})"
             except Exception as _e:
                 _last_err = _e
-        # Fallback: extract basic price data from v8/chart meta
+        # Fallback: try Finnhub (no CORS issues) when Yahoo returns nothing
+        if finnhub_api_key and finnhub_api_key.value:
+            try:
+                return _get_info_finnhub(ticker, finnhub_api_key.value)
+            except Exception as _fe:
+                _last_err = f"Yahoo failed; Finnhub also failed: {_fe}"
+        # Last resort: pull just the price from the v8/chart meta object
         try:
             _chart_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
             _chart_data = _proxy_get(_chart_url).json()
@@ -683,7 +694,7 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
                     "sharesOutstanding":  None,
                     "sector":             "",
                     "industry":           "",
-                    "longBusinessSummary": "(Detailed stats unavailable — showing price data only)",
+                    "longBusinessSummary": "(Add a Finnhub API key above to see full statistics)",
                 }
         except Exception:
             pass
