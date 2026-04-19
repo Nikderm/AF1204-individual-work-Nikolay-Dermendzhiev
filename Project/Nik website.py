@@ -155,6 +155,12 @@ def _(df_airlines, df_final, mo):
         placeholder="Search companies...",
         label="🔍 Search Companies"
     )
+    # Finnhub fallback API key (optional)
+    finnhub_api_key = mo.ui.text(
+        kind="password",
+        placeholder="Free key at finnhub.io/register",
+        label="📊 Finnhub API Key (optional)",
+    )
     # 4. Groq AI controls
     ai_api_key = mo.ui.text(
         kind="password",
@@ -180,6 +186,7 @@ def _(df_airlines, df_final, mo):
         comparison_companies,
         dataset_toggle,
         pdf_upload,
+        finnhub_api_key,
         risk_threshold,
         search_input,
     )
