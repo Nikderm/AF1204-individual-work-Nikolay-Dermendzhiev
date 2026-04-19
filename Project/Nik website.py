@@ -1,10 +1,9 @@
 # /// script
-# requires-python = ">=3.13"
+# requires-python = ">=3.12"
 # dependencies = [
 #     "marimo>=0.23.1",
 #     "pandas>=2.3.3",
 #     "plotly>=6.5.1",
-#     "pyarrow>=22.0.0",
 #     "pyodide-http>=0.2.2",
 #     "requests>=2.33.1",
 #     "tabulate>=0.10.0",
