@@ -608,7 +608,13 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
         company_detail = mo.md("")
     elif yf is None:
         company_detail = mo.callout(
-            mo.md("**yfinance** is not available in this environment. Run the notebook locally to see live data."),
+            mo.md(
+                "**Live stock data unavailable in the browser.**\n\n"
+                "Yahoo Finance blocks cross-origin requests from web apps, so yfinance cannot "
+                "fetch data when running as a website. To use this tab with live data, run the "
+                "notebook locally with `marimo edit`.\n\n"
+                "The Credit Risk, Company Financials, Travel Map and AI tabs all work fully in the browser."
+            ),
             kind="warn",
         )
     else:
@@ -830,10 +836,21 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                 ])
 
             except Exception as _e:
-                company_detail = mo.callout(
-                    mo.md(f"Could not load data for **{_ticker}**: `{_e}`"),
-                    kind="danger",
-                )
+                _err_str = str(_e)
+                if any(x in _err_str for x in ["XMLHttpRequest", "NetworkError", "fc.yahoo.com", "CORS"]):
+                    company_detail = mo.callout(
+                        mo.md(
+                            f"**Live data unavailable for {_ticker} in the browser.**\n\n"
+                            "Yahoo Finance blocks cross-origin requests from web apps. "
+                            "Run the notebook locally with `marimo edit` to use this tab with live data."
+                        ),
+                        kind="warn",
+                    )
+                else:
+                    company_detail = mo.callout(
+                        mo.md(f"Could not load data for **{_ticker}**: `{_e}`"),
+                        kind="danger",
+                    )
     return (company_detail,)
 
 
