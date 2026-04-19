@@ -580,11 +580,84 @@ def _(df_airlines, df_final, mo, pd, search_input):
 
 
 @app.cell
-def _(mo, pd, pdf_upload, px, search_table, yf):
+def _(mo, pd, pdf_upload, px, requests, search_table, yf):
     # 5d-B: Company detail panel — reacts whenever the user selects a row
 
+    import sys as _sys
+    import urllib.parse as _urlparse
+    import datetime as _dt
+    import io as _io
+
+    _is_wasm = "pyodide" in _sys.modules
+
+    # ── CORS-proxy helpers (used when running in browser) ─────────────────
+    _CORS = "https://corsproxy.io/?"
+
+    def _proxy_get(url):
+        full = _CORS + _urlparse.quote(url, safe='')
+        r = requests.get(full, timeout=15)
+        r.raise_for_status()
+        return r
+
+    def _raw(v):
+        """Extract .raw from a Yahoo Finance module field dict."""
+        if isinstance(v, dict):
+            return v.get("raw")
+        return v if not isinstance(v, (dict, list)) else None
+
+    def _get_info_wasm(ticker):
+        """Fetch company info via Yahoo Finance quoteSummary API through CORS proxy."""
+        modules = "price,summaryDetail,defaultKeyStatistics,financialData,summaryProfile"
+        url = (
+            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+            f"?modules={modules}&corsDomain=finance.yahoo.com"
+        )
+        data = _proxy_get(url).json()
+        result = data["quoteSummary"]["result"][0]
+        info = {}
+        for module_data in result.values():
+            if isinstance(module_data, dict):
+                for k, v in module_data.items():
+                    val = _raw(v)
+                    if val is not None:
+                        info[k] = val
+        return info
+
+    def _get_history_wasm(ticker):
+        """Fetch price history via Yahoo Finance chart API through CORS proxy."""
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+            f"?interval=1d&range=max&corsDomain=finance.yahoo.com"
+        )
+        data = _proxy_get(url).json()
+        result = data["chart"]["result"][0]
+        timestamps = result.get("timestamp", [])
+        closes = result["indicators"]["quote"][0].get("close", [])
+        df = pd.DataFrame({
+            "Date": [_dt.datetime.fromtimestamp(t) for t in timestamps],
+            "Close": closes,
+        }).dropna(subset=["Close"])
+        return df[df["Close"] > 0].reset_index(drop=True)
+
+    def _get_dividends_wasm(ticker):
+        """Fetch dividend events via Yahoo Finance chart API through CORS proxy."""
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+            f"?events=dividends&interval=3mo&range=max&corsDomain=finance.yahoo.com"
+        )
+        data = _proxy_get(url).json()
+        result = data["chart"]["result"][0]
+        raw_divs = result.get("events", {}).get("dividends", {})
+        if not raw_divs:
+            return pd.DataFrame()
+        rows = [
+            {"Date": _dt.datetime.fromtimestamp(int(k)), "Dividend": v.get("amount", 0)}
+            for k, v in raw_divs.items()
+        ]
+        return pd.DataFrame(rows).sort_values("Date")
+
+    # ── Shared value formatter ─────────────────────────────────────────────
     def _v(info, key, pct=False, decimals=2):
-        """Safely extract and format a value from a yfinance info dict."""
         val = info.get(key)
         if val is None or (isinstance(val, float) and str(val) == 'nan'):
             return "N/A"
@@ -606,17 +679,6 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
 
     if _selected is None or (hasattr(_selected, "__len__") and len(_selected) == 0):
         company_detail = mo.md("")
-    elif yf is None:
-        company_detail = mo.callout(
-            mo.md(
-                "**Live stock data unavailable in the browser.**\n\n"
-                "Yahoo Finance blocks cross-origin requests from web apps, so yfinance cannot "
-                "fetch data when running as a website. To use this tab with live data, run the "
-                "notebook locally with `marimo edit`.\n\n"
-                "The Credit Risk, Company Financials, Travel Map and AI tabs all work fully in the browser."
-            ),
-            kind="warn",
-        )
     else:
         _row    = _selected.iloc[0]
         _name   = _row.get("Name",   "Unknown") if hasattr(_row, "get") else str(_row.iloc[0])
@@ -629,13 +691,53 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
             )
         else:
             try:
-                stock = yf.Ticker(str(_ticker))
-                info  = stock.info
+                # ── Fetch data: WASM uses direct API + CORS proxy; local uses yfinance ──
+                if _is_wasm:
+                    info = _get_info_wasm(str(_ticker))
+                    hist = _get_history_wasm(str(_ticker))
+                    _divs_df = _get_dividends_wasm(str(_ticker))
+                    eps_chart = mo.callout(mo.md("Quarterly EPS not available in browser mode."), kind="info")
+                else:
+                    if yf is None:
+                        raise RuntimeError("yfinance not available")
+                    stock = yf.Ticker(str(_ticker))
+                    info  = stock.info
+                    raw_hist = stock.history(period="max")
+                    hist = raw_hist.reset_index() if not raw_hist.empty else pd.DataFrame()
+                    raw_divs = stock.dividends
+                    if len(raw_divs) > 0:
+                        _divs_df = raw_divs.reset_index()
+                        _divs_df.columns = ["Date", "Dividend"]
+                    else:
+                        _divs_df = pd.DataFrame()
+                    # EPS
+                    try:
+                        eps_df = stock.quarterly_income_stmt
+                        if eps_df is not None and not eps_df.empty and "Basic EPS" in eps_df.index:
+                            _eps_series = eps_df.loc["Basic EPS"].dropna()
+                            _eps_plot = pd.DataFrame({
+                                "Quarter": _eps_series.index,
+                                "EPS": _eps_series.values,
+                            }).sort_values("Quarter")
+                            _fig_eps = px.bar(
+                                _eps_plot, x="Quarter", y="EPS",
+                                title=f"{_name} — Quarterly EPS",
+                                labels={"EPS": f"Basic EPS ({info.get('currency','')})"},
+                                template="presentation",
+                                color="EPS",
+                                color_continuous_scale=["#EF553B", "#636EFA", "#00CC96"],
+                                width=900, height=350,
+                            )
+                            eps_chart = mo.ui.plotly(_fig_eps)
+                        else:
+                            eps_chart = mo.callout(mo.md("EPS data not available for this ticker."), kind="info")
+                    except Exception:
+                        eps_chart = mo.callout(mo.md("EPS data not available for this ticker."), kind="info")
 
-                # ── Key statistics table ───────────────────────────────────────
+                # ── Key statistics ─────────────────────────────────────────────
                 currency = info.get("currency", "")
                 _stats = {
-                    "Current Price":        f"{info.get('currentPrice', 'N/A')} {currency}",
+                    "Current Price":        f"{info.get('currentPrice', info.get('regularMarketPrice', 'N/A'))} {currency}",
                     "Market Cap":           _v(info, "marketCap"),
                     "P/E Ratio (TTM)":      _v(info, "trailingPE"),
                     "Forward P/E":          _v(info, "forwardPE"),
@@ -644,19 +746,18 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                     "Revenue (TTM)":        _v(info, "totalRevenue"),
                     "EBITDA":               _v(info, "ebitda"),
                     "Free Cash Flow":       _v(info, "freeCashflow"),
-                    "Gross Margin":         _v(info, "grossMargins",         pct=True),
-                    "Profit Margin":        _v(info, "profitMargins",        pct=True),
-                    "Return on Equity":     _v(info, "returnOnEquity",       pct=True),
+                    "Gross Margin":         _v(info, "grossMargins",      pct=True),
+                    "Profit Margin":        _v(info, "profitMargins",     pct=True),
+                    "Return on Equity":     _v(info, "returnOnEquity",    pct=True),
                     "Debt / Equity":        _v(info, "debtToEquity"),
                     "Total Debt":           _v(info, "totalDebt"),
                     "Dividend Rate":        _v(info, "dividendRate"),
-                    "Dividend Yield":       _v(info, "dividendYield",        pct=True),
+                    "Dividend Yield":       _v(info, "dividendYield",     pct=True),
                     "52-Week High":         _v(info, "fiftyTwoWeekHigh"),
                     "52-Week Low":          _v(info, "fiftyTwoWeekLow"),
                     "Beta":                 _v(info, "beta"),
                     "Shares Outstanding":   _v(info, "sharesOutstanding"),
                 }
-
                 _stats_items = list(_stats.items())
                 _half = len(_stats_items) // 2 + len(_stats_items) % 2
                 stats_panel = mo.hstack(
@@ -667,11 +768,9 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                     gap=3,
                 )
 
-                # ── Price history chart (all time) ────────────────────────────
-                hist = stock.history(period="max")
-                if not hist.empty:
-                    hist = hist.reset_index()
-                    hist = hist[hist["Close"] > 0]  # drop erroneous non-positive adjusted prices
+                # ── Price history chart ────────────────────────────────────────
+                if not hist.empty and "Close" in hist.columns:
+                    hist = hist[hist["Close"] > 0]
                     _fig_price = px.line(
                         hist, x="Date", y="Close",
                         title=f"{_name} ({_ticker}) — Price History",
@@ -694,41 +793,34 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                 else:
                     price_chart = mo.callout(mo.md("Price history not available."), kind="warn")
 
-                # ── Earnings report PDF extractor ─────────────────────────────
+                # ── PDF earnings report ────────────────────────────────────────
                 if pdf_upload.value:
                     try:
-                        import io
                         try:
                             import pypdf
                         except ImportError:
                             import subprocess, sys
                             subprocess.run([sys.executable, "-m", "pip", "install", "pypdf"], check=True, capture_output=True)
                             import pypdf
-                        _pdf_bytes = pdf_upload.value[0].contents
-                        _reader = pypdf.PdfReader(io.BytesIO(_pdf_bytes))
-                        _pages = min(len(_reader.pages), 40)
                         import re as _re
-                        # Pattern: label followed by 2+ spaces then numeric values
+                        _pdf_bytes = pdf_upload.value[0].contents
+                        _reader = pypdf.PdfReader(_io.BytesIO(_pdf_bytes))
+                        _pages = min(len(_reader.pages), 40)
                         _fin_pattern = _re.compile(
                             r"^(.+?)\s{2,}([\-\(]?[\d][\d,\.]*[MBK%]?\)?(?:\s+[\-\(]?[\d][\d,\.]*[MBK%]?\)?)*)\s*$"
                         )
-                        # Collect all text first, then find year tokens for column headers
                         _all_text = "\n".join(
                             _reader.pages[_pi].extract_text() or "" for _pi in range(_pages)
                         )
-                        # Find unique years mentioned in the document (in order of appearance)
                         _year_tokens = list(dict.fromkeys(_re.findall(r"\b(20\d{2}|19\d{2})\b", _all_text)))
-                        # Detect unit label: lines like "(in EUR millions)", "€ thousands", "USD billions" etc.
                         _unit_match = _re.search(
                             r"\(?in\s+([A-Za-z€$£¥]+\s*(?:millions?|billions?|thousands?|'000s?))\)?|"
                             r"([€$£¥][A-Za-z]*\s*(?:millions?|billions?|thousands?|'000s?))|"
                             r"((?:millions?|billions?|thousands?)\s+of\s+[A-Za-z€$£¥]+)",
-                            _all_text,
-                            _re.IGNORECASE,
+                            _all_text, _re.IGNORECASE,
                         )
                         _unit_label = next(
-                            (g for g in (_unit_match.groups() if _unit_match else []) if g),
-                            "Item"
+                            (g for g in (_unit_match.groups() if _unit_match else []) if g), "Item"
                         ).strip()
                         _rows = []
                         for _line in _all_text.splitlines():
@@ -737,18 +829,15 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                                 continue
                             _m = _fin_pattern.match(_line)
                             if _m:
-                                _label = _m.group(1).strip()
-                                _vals = _m.group(2).strip()
-                                _vcols = _re.split(r"\s{2,}", _vals)
-                                _rows.append([_label] + _vcols)
+                                _rows.append([_m.group(1).strip()] + _re.split(r"\s{2,}", _m.group(2).strip()))
                         if _rows:
                             _max_cols = max(len(r) for r in _rows)
                             _col_count = _max_cols - 1
-                            # Use year tokens as column headers if count matches
-                            if len(_year_tokens) >= _col_count:
-                                _headers = [_unit_label] + _year_tokens[:_col_count]
-                            else:
-                                _headers = [_unit_label] + _year_tokens + [f"Val {i+1}" for i in range(_col_count - len(_year_tokens))]
+                            _headers = (
+                                [_unit_label] + _year_tokens[:_col_count]
+                                if len(_year_tokens) >= _col_count
+                                else [_unit_label] + _year_tokens + [f"Val {i+1}" for i in range(_col_count - len(_year_tokens))]
+                            )
                             _rows = [r + [""] * (_max_cols - len(r)) for r in _rows]
                             _fin_df = pd.DataFrame(_rows, columns=_headers)
                             pdf_block = mo.vstack([
@@ -756,10 +845,7 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                                 mo.ui.table(_fin_df, show_column_summaries=False, pagination=False),
                             ])
                         else:
-                            pdf_block = mo.callout(
-                                mo.md("No structured financial data found in this PDF. Try a report with tabular financials."),
-                                kind="warn",
-                            )
+                            pdf_block = mo.callout(mo.md("No structured financial data found. Try a report with tabular financials."), kind="warn")
                     except Exception as _pdf_err:
                         pdf_block = mo.callout(mo.md(f"Could not read PDF: `{_pdf_err}`"), kind="danger")
                 else:
@@ -768,14 +854,11 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                         kind="info",
                     )
 
-                # ── Dividend history chart (annual totals) ────────────────────
-                divs = stock.dividends
-                if len(divs) > 0:
-                    _div_df = divs.reset_index()
-                    _div_df.columns = ["Date", "Dividend"]
-                    _div_df = _div_df[_div_df["Dividend"] > 0]  # drop negative adjustments
-                    _div_df["Year"] = pd.to_datetime(_div_df["Date"]).dt.year
-                    _annual = _div_df.groupby("Year", as_index=False)["Dividend"].sum()
+                # ── Dividend history chart ─────────────────────────────────────
+                if not _divs_df.empty:
+                    _divs_df = _divs_df[_divs_df["Dividend"] > 0]
+                    _divs_df["Year"] = pd.to_datetime(_divs_df["Date"]).dt.year
+                    _annual = _divs_df.groupby("Year", as_index=False)["Dividend"].sum()
                     _fig_div = px.bar(
                         _annual, x="Year", y="Dividend",
                         title=f"{_name} — Annual Dividends Paid",
@@ -790,30 +873,6 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                     div_chart = mo.ui.plotly(_fig_div)
                 else:
                     div_chart = mo.callout(mo.md("No dividend history on record."), kind="info")
-
-                # ── EPS trend chart (from quarterly earnings) ──────────────────
-                try:
-                    eps_df = stock.quarterly_income_stmt
-                    if eps_df is not None and not eps_df.empty and "Basic EPS" in eps_df.index:
-                        _eps_series = eps_df.loc["Basic EPS"].dropna()
-                        _eps_plot = pd.DataFrame({
-                            "Quarter": _eps_series.index,
-                            "EPS": _eps_series.values,
-                        }).sort_values("Quarter")
-                        _fig_eps = px.bar(
-                            _eps_plot, x="Quarter", y="EPS",
-                            title=f"{_name} — Quarterly EPS",
-                            labels={"EPS": f"Basic EPS ({currency})"},
-                            template="presentation",
-                            color="EPS",
-                            color_continuous_scale=["#EF553B", "#636EFA", "#00CC96"],
-                            width=900, height=350,
-                        )
-                        eps_chart = mo.ui.plotly(_fig_eps)
-                    else:
-                        eps_chart = mo.callout(mo.md("EPS data not available for this ticker."), kind="info")
-                except Exception:
-                    eps_chart = mo.callout(mo.md("EPS data not available for this ticker."), kind="info")
 
                 # ── Business summary ───────────────────────────────────────────
                 summary = info.get("longBusinessSummary", "")
@@ -836,22 +895,14 @@ def _(mo, pd, pdf_upload, px, search_table, yf):
                 ])
 
             except Exception as _e:
-                _err_str = str(_e)
-                if any(x in _err_str for x in ["XMLHttpRequest", "NetworkError", "fc.yahoo.com", "CORS"]):
-                    company_detail = mo.callout(
-                        mo.md(
-                            f"**Live data unavailable for {_ticker} in the browser.**\n\n"
-                            "Yahoo Finance blocks cross-origin requests from web apps. "
-                            "Run the notebook locally with `marimo edit` to use this tab with live data."
-                        ),
-                        kind="warn",
-                    )
-                else:
-                    company_detail = mo.callout(
-                        mo.md(f"Could not load data for **{_ticker}**: `{_e}`"),
-                        kind="danger",
-                    )
+                company_detail = mo.callout(
+                    mo.md(f"Could not load data for **{_ticker}**: `{_e}`"),
+                    kind="danger",
+                )
     return (company_detail,)
+
+
+
 
 
 @app.cell
