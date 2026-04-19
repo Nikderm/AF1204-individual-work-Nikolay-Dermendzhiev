@@ -8,6 +8,7 @@
 #     "requests>=2.33.1",
 #     "tabulate>=0.10.0",
 #     "pypdf>=6.0.0",
+#     "yfinance>=0.2.36",
 # ]
 # ///
 
