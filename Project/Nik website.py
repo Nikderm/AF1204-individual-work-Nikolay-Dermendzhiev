@@ -157,6 +157,7 @@ def _(df_airlines, df_final, mo):
     )
     # Finnhub fallback API key (optional)
     finnhub_api_key = mo.ui.text(
+        value="d7ihk59r01qn2qau2jo0d7ihk59r01qn2qau2jog",
         kind="password",
         placeholder="Free key at finnhub.io/register",
         label="📊 Finnhub API Key (optional)",
