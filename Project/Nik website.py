@@ -588,7 +588,7 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
     import datetime as _dt
     import io as _io
 
-    _is_wasm = "pyodide" in _sys.modules
+    _is_wasm = _sys.platform == 'emscripten'
 
     # ── CORS-proxy helpers (used when running in browser) ─────────────────
     _CORS = "https://corsproxy.io/?"
@@ -704,11 +704,14 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
                     info  = stock.info
                     raw_hist = stock.history(period="max")
                     hist = raw_hist.reset_index() if not raw_hist.empty else pd.DataFrame()
-                    raw_divs = stock.dividends
-                    if len(raw_divs) > 0:
-                        _divs_df = raw_divs.reset_index()
-                        _divs_df.columns = ["Date", "Dividend"]
-                    else:
+                    try:
+                        raw_divs = stock.dividends
+                        if len(raw_divs) > 0:
+                            _divs_df = raw_divs.reset_index()
+                            _divs_df.columns = ["Date", "Dividend"]
+                        else:
+                            _divs_df = pd.DataFrame()
+                    except Exception:
                         _divs_df = pd.DataFrame()
                     # EPS
                     try:
@@ -900,9 +903,6 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
                     kind="danger",
                 )
     return (company_detail,)
-
-
-
 
 
 @app.cell
