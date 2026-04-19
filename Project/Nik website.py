@@ -31,7 +31,7 @@ def _():
         import micropip
     except ImportError:
         micropip = None  # Not available when running locally (only in WASM/Pyodide)
-    return micropip, mo, pd
+    return mo, pd
 
 
 @app.cell
@@ -188,18 +188,14 @@ def _(df_airlines, df_final, mo):
     )
 
 
-@app.cell
-async def _(micropip):
+app._unparsable_cell(
+    r"""
     # Await installation of packages in the WASM environment
     # Install each package individually so one failure doesn't block the rest
     if micropip is not None:
         for _pkg in ['plotly', 'requests', 'yfinance', 'pypdf']:
             try:
-                await micropip.install(_pkg)
-            except Exception:
-                pass  # package unavailable in this Pyodide build — continue
-
-    # Patch requests to work inside the browser (WASM / pyodide environment)
+                    await micropip.install(_pkg, keep_going=True)
     # pyodide_http re-routes requests through XMLHttpRequest so HTTP calls work client-side
     try:
         import pyodide_http
@@ -213,7 +209,9 @@ async def _(micropip):
         import yfinance as yf
     except ImportError:
         yf = None  # yfinance not available in this environment
-    return px, requests, yf
+    """,
+    name="_"
+)
 
 
 @app.cell
@@ -490,7 +488,7 @@ def _(fig_travel, mo, pd, tab_afklm_credit_risk):
     )
 
     # --- Tab 2f: Company Financials (loaded from CSV files) ---
-    data_dir = str(mo.notebook_location() / "data")
+    data_dir = str(mo.notebook_location() / "public")
 
     df_income_stmt = pd.read_csv(data_dir + "/Data (Sheet3).csv", encoding='latin-1')
     df_balance_sheet = pd.read_csv(data_dir + "/Data (Sheet2).csv", encoding='latin-1')
