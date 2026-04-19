@@ -8,7 +8,6 @@
 #     "pyodide-http>=0.2.2",
 #     "requests>=2.33.1",
 #     "tabulate>=0.10.0",
-#     "yfinance>=0.2.54",
 #     "pypdf>=6.0.0",
 # ]
 # ///
@@ -30,7 +29,7 @@ def _():
         import micropip
     except ImportError:
         micropip = None  # Not available when running locally (only in WASM/Pyodide)
-    return mo, pd
+    return micropip, mo, pd
 
 
 @app.cell
@@ -192,7 +191,7 @@ async def _(micropip):
     # Await installation of packages in the WASM environment
     # Install each package individually so one failure doesn't block the rest
     if micropip is not None:
-        for _pkg in ['plotly', 'requests', 'yfinance', 'pypdf']:
+        for _pkg in ['plotly', 'requests', 'pypdf']:
             try:
                 await micropip.install(_pkg, keep_going=True)
             except Exception:
@@ -489,10 +488,10 @@ def _(fig_travel, mo, pd, tab_afklm_credit_risk):
     # --- Tab 2f: Company Financials (loaded from CSV files) ---
     data_dir = str(mo.notebook_location() / "public")
 
-    df_income_stmt = pd.read_csv(data_dir + "/Data (Sheet3).csv", encoding='latin-1')
-    df_balance_sheet = pd.read_csv(data_dir + "/Data (Sheet2).csv", encoding='latin-1')
-    df_comprehensive = pd.read_csv(data_dir + "/Data (Sheet1).csv", encoding='latin-1')
-    df_equity = pd.read_csv(data_dir + "/Data (in).csv", encoding='latin-1')
+    df_income_stmt = pd.read_csv(data_dir + "/Data (Sheet3).csv", encoding='latin-1', compression=None)
+    df_balance_sheet = pd.read_csv(data_dir + "/Data (Sheet2).csv", encoding='latin-1', compression=None)
+    df_comprehensive = pd.read_csv(data_dir + "/Data (Sheet1).csv", encoding='latin-1', compression=None)
+    df_equity = pd.read_csv(data_dir + "/Data (in).csv", encoding='latin-1', compression=None)
 
     tab_company_financials = mo.vstack([
         mo.md("## Company Financials"),
