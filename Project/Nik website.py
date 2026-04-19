@@ -190,7 +190,7 @@ async def _(micropip):
     # Await installation of packages in the WASM environment
     # Install each package individually so one failure doesn't block the rest
     if micropip is not None:
-        for _pkg in ['plotly', 'requests', 'pypdf']:
+        for _pkg in ['plotly', 'requests', 'pypdf', 'yfinance']:
             try:
                 await micropip.install(_pkg, keep_going=True)
             except Exception:
