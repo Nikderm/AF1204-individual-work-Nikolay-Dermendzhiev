@@ -416,7 +416,7 @@ def _(
 
 
 @app.cell
-def _(fig_travel, mo, pd, tab_afklm_credit_risk):
+def _(fig_travel, mo, pd, requests, tab_afklm_credit_risk):
     # 5b: The "Portfolio" Layout (a Multi-Tab Webpage)
 
     # Combine everything into a polished, tabbed interface using Markdown and mo.ui.tabs.
@@ -485,12 +485,22 @@ def _(fig_travel, mo, pd, tab_afklm_credit_risk):
     )
 
     # --- Tab 2f: Company Financials (loaded from CSV files) ---
+    import io as _io
     data_dir = str(mo.notebook_location() / "public")
 
-    df_income_stmt = pd.read_csv(data_dir + "/Data (Sheet3).csv", encoding='latin-1', compression=None)
-    df_balance_sheet = pd.read_csv(data_dir + "/Data (Sheet2).csv", encoding='latin-1', compression=None)
-    df_comprehensive = pd.read_csv(data_dir + "/Data (Sheet1).csv", encoding='latin-1', compression=None)
-    df_equity = pd.read_csv(data_dir + "/Data (in).csv", encoding='latin-1', compression=None)
+    def _read_csv(path):
+        # Fetch via requests so pyodide_http handles decompression properly
+        try:
+            _r = requests.get(path)
+            _r.raise_for_status()
+            return pd.read_csv(_io.BytesIO(_r.content), encoding='latin-1')
+        except Exception:
+            return pd.read_csv(path, encoding='latin-1')
+
+    df_income_stmt = _read_csv(data_dir + "/Data (Sheet3).csv")
+    df_balance_sheet = _read_csv(data_dir + "/Data (Sheet2).csv")
+    df_comprehensive = _read_csv(data_dir + "/Data (Sheet1).csv")
+    df_equity = _read_csv(data_dir + "/Data (in).csv")
 
     tab_company_financials = mo.vstack([
         mo.md("## Company Financials"),
