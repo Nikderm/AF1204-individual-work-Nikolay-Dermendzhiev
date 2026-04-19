@@ -689,15 +689,70 @@ def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
         }
 
     def _get_info_wasm(ticker):
-        """Fetch quote info — Finnhub first (if key provided), then Yahoo Finance v7."""
+        """Fetch quote info — Yahoo quoteSummary v10 first (full data), Finnhub fallback, then v7."""
         _last_err = None
-        # ── 1. Finnhub (direct, no CORS proxy needed) — use when key is available ──
+
+        def _raw(d, k):
+            """Extract numeric value from Yahoo's {raw: x, fmt: y} wrapper."""
+            v = d.get(k)
+            if isinstance(v, dict):
+                return v.get("raw")
+            return v
+
+        # ── 1. Yahoo Finance quoteSummary v10 — returns all stats ─────────────
+        _qs_modules = "assetProfile,financialData,defaultKeyStatistics,summaryDetail"
+        for _host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
+            try:
+                _url = f"https://{_host}/v10/finance/quoteSummary/{ticker}?modules={_qs_modules}"
+                _r = _proxy_get(_url)
+                _data = _r.json()
+                _result = ((_data.get("quoteSummary") or {}).get("result") or [None])[0]
+                if _result:
+                    ap = _result.get("assetProfile") or {}
+                    fd = _result.get("financialData") or {}
+                    ks = _result.get("defaultKeyStatistics") or {}
+                    sd = _result.get("summaryDetail") or {}
+                    _price = _raw(fd, "currentPrice") or _raw(sd, "regularMarketPrice")
+                    if _price:
+                        return {
+                            "currency":           sd.get("currency") or fd.get("financialCurrency", ""),
+                            "currentPrice":       _price,
+                            "regularMarketPrice": _price,
+                            "marketCap":          _raw(sd, "marketCap"),
+                            "trailingPE":         _raw(sd, "trailingPE"),
+                            "forwardPE":          _raw(sd, "forwardPE"),
+                            "trailingEps":        _raw(ks, "trailingEps"),
+                            "forwardEps":         _raw(ks, "forwardEps"),
+                            "totalRevenue":       _raw(fd, "totalRevenue"),
+                            "ebitda":             _raw(fd, "ebitda"),
+                            "freeCashflow":       _raw(fd, "freeCashflow"),
+                            "grossMargins":       _raw(fd, "grossMargins"),
+                            "profitMargins":      _raw(fd, "profitMargins"),
+                            "returnOnEquity":     _raw(fd, "returnOnEquity"),
+                            "debtToEquity":       _raw(fd, "debtToEquity"),
+                            "totalDebt":          _raw(fd, "totalDebt"),
+                            "dividendRate":       _raw(sd, "dividendRate"),
+                            "dividendYield":      _raw(sd, "dividendYield"),
+                            "fiftyTwoWeekHigh":   _raw(sd, "fiftyTwoWeekHigh"),
+                            "fiftyTwoWeekLow":    _raw(sd, "fiftyTwoWeekLow"),
+                            "beta":               _raw(ks, "beta") or _raw(sd, "beta"),
+                            "sharesOutstanding":  _raw(ks, "sharesOutstanding"),
+                            "sector":             ap.get("sector", ""),
+                            "industry":           ap.get("industry", ""),
+                            "longBusinessSummary": ap.get("longBusinessSummary", ""),
+                        }
+                _last_err = f"Empty quoteSummary from {_host}"
+            except Exception as _e:
+                _last_err = _e
+
+        # ── 2. Finnhub fallback (if key provided) ─────────────────────────────
         if finnhub_api_key and finnhub_api_key.value:
             try:
                 return _get_info_finnhub(ticker, finnhub_api_key.value)
             except Exception as _fe:
                 _last_err = f"Finnhub: {_fe}"
-        # ── 2. Yahoo Finance v7 via CORS proxy ────────────────────────────────────
+
+        # ── 3. Yahoo Finance v7 via CORS proxy (partial data) ────────────────
         for _host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
             try:
                 url = f"https://{_host}/v7/finance/quote?symbols={ticker}"
@@ -735,7 +790,8 @@ def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
                 _last_err = f"Empty result from {_host} (keys: {list(data.keys())})"
             except Exception as _e:
                 _last_err = _e
-        # Last resort: pull just the price from the v8/chart meta object
+
+        # ── 4. Last resort: v8/chart price only ───────────────────────────────
         try:
             _chart_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
             _chart_data = _proxy_get(_chart_url).json()
@@ -766,7 +822,7 @@ def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
                     "sharesOutstanding":  None,
                     "sector":             "",
                     "industry":           "",
-                    "longBusinessSummary": "(Add a Finnhub API key above to see full statistics)",
+                    "longBusinessSummary": "",
                 }
         except Exception:
             pass
