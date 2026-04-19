@@ -613,71 +613,131 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
         raise RuntimeError(f"All CORS proxies failed: {last_err}")
 
     def _get_info_wasm(ticker):
-        """Use Yahoo Finance v7 quote endpoint — no crumb/cookie required."""
-        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={ticker}"
-        data = _proxy_get(url).json()
-        raw = data["quoteResponse"]["result"][0]
-        # Normalise v7 field names → yfinance-compatible names used by _v()
-        return {
-            "currency":           raw.get("currency", ""),
-            "currentPrice":       raw.get("regularMarketPrice"),
-            "regularMarketPrice": raw.get("regularMarketPrice"),
-            "marketCap":          raw.get("marketCap"),
-            "trailingPE":         raw.get("trailingPE"),
-            "forwardPE":          raw.get("forwardPE"),
-            "trailingEps":        raw.get("epsTrailingTwelveMonths"),
-            "forwardEps":         raw.get("epsForward"),
-            "totalRevenue":       raw.get("revenueTrailingTwelveMonths"),
-            "ebitda":             raw.get("ebitda"),
-            "freeCashflow":       raw.get("freeCashFlow"),
-            "grossMargins":       raw.get("grossMargins"),
-            "profitMargins":      raw.get("profitMargins"),
-            "returnOnEquity":     raw.get("returnOnEquity"),
-            "debtToEquity":       raw.get("debtToEquity"),
-            "totalDebt":          raw.get("totalDebt"),
-            "dividendRate":       raw.get("trailingAnnualDividendRate"),
-            "dividendYield":      raw.get("trailingAnnualDividendYield"),
-            "fiftyTwoWeekHigh":   raw.get("fiftyTwoWeekHigh"),
-            "fiftyTwoWeekLow":    raw.get("fiftyTwoWeekLow"),
-            "beta":               raw.get("beta"),
-            "sharesOutstanding":  raw.get("sharesOutstanding"),
-            "sector":             raw.get("sector", ""),
-            "industry":           raw.get("industry", ""),
-            "longBusinessSummary": raw.get("longBusinessSummary", ""),
-        }
+        """Fetch quote info via Yahoo Finance v7, with fallbacks."""
+        _last_err = None
+        for _host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
+            try:
+                url = f"https://{_host}/v7/finance/quote?symbols={ticker}"
+                data = _proxy_get(url).json()
+                results = (data.get("quoteResponse") or {}).get("result") or []
+                if results:
+                    raw = results[0]
+                    return {
+                        "currency":           raw.get("currency", ""),
+                        "currentPrice":       raw.get("regularMarketPrice"),
+                        "regularMarketPrice": raw.get("regularMarketPrice"),
+                        "marketCap":          raw.get("marketCap"),
+                        "trailingPE":         raw.get("trailingPE"),
+                        "forwardPE":          raw.get("forwardPE"),
+                        "trailingEps":        raw.get("epsTrailingTwelveMonths"),
+                        "forwardEps":         raw.get("epsForward"),
+                        "totalRevenue":       raw.get("revenueTrailingTwelveMonths"),
+                        "ebitda":             raw.get("ebitda"),
+                        "freeCashflow":       raw.get("freeCashFlow"),
+                        "grossMargins":       raw.get("grossMargins"),
+                        "profitMargins":      raw.get("profitMargins"),
+                        "returnOnEquity":     raw.get("returnOnEquity"),
+                        "debtToEquity":       raw.get("debtToEquity"),
+                        "totalDebt":          raw.get("totalDebt"),
+                        "dividendRate":       raw.get("trailingAnnualDividendRate"),
+                        "dividendYield":      raw.get("trailingAnnualDividendYield"),
+                        "fiftyTwoWeekHigh":   raw.get("fiftyTwoWeekHigh"),
+                        "fiftyTwoWeekLow":    raw.get("fiftyTwoWeekLow"),
+                        "beta":               raw.get("beta"),
+                        "sharesOutstanding":  raw.get("sharesOutstanding"),
+                        "sector":             raw.get("sector", ""),
+                        "industry":           raw.get("industry", ""),
+                        "longBusinessSummary": raw.get("longBusinessSummary", ""),
+                    }
+                _last_err = f"Empty result from {_host} (keys: {list(data.keys())})"
+            except Exception as _e:
+                _last_err = _e
+        # Fallback: extract basic price data from v8/chart meta
+        try:
+            _chart_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
+            _chart_data = _proxy_get(_chart_url).json()
+            _meta = ((_chart_data.get("chart") or {}).get("result") or [{}])[0].get("meta", {})
+            if _meta.get("regularMarketPrice"):
+                return {
+                    "currency":           _meta.get("currency", ""),
+                    "currentPrice":       _meta.get("regularMarketPrice"),
+                    "regularMarketPrice": _meta.get("regularMarketPrice"),
+                    "marketCap":          None,
+                    "trailingPE":         None,
+                    "forwardPE":          None,
+                    "trailingEps":        None,
+                    "forwardEps":         None,
+                    "totalRevenue":       None,
+                    "ebitda":             None,
+                    "freeCashflow":       None,
+                    "grossMargins":       None,
+                    "profitMargins":      None,
+                    "returnOnEquity":     None,
+                    "debtToEquity":       None,
+                    "totalDebt":          None,
+                    "dividendRate":       None,
+                    "dividendYield":      None,
+                    "fiftyTwoWeekHigh":   _meta.get("fiftyTwoWeekHigh"),
+                    "fiftyTwoWeekLow":    _meta.get("fiftyTwoWeekLow"),
+                    "beta":               None,
+                    "sharesOutstanding":  None,
+                    "sector":             "",
+                    "industry":           "",
+                    "longBusinessSummary": "(Detailed stats unavailable — showing price data only)",
+                }
+        except Exception:
+            pass
+        raise RuntimeError(f"Could not fetch quote for {ticker}: {_last_err}")
 
     def _get_history_wasm(ticker):
         """Fetch price history via Yahoo Finance chart API."""
-        url = (
-            f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-            f"?interval=1d&range=max"
-        )
-        data = _proxy_get(url).json()
-        result = data["chart"]["result"][0]
-        timestamps = result.get("timestamp", [])
-        closes = result["indicators"]["quote"][0].get("close", [])
-        df = pd.DataFrame({
-            "Date": [_dt.datetime.fromtimestamp(t) for t in timestamps],
-            "Close": closes,
-        }).dropna(subset=["Close"])
-        return df[df["Close"] > 0].reset_index(drop=True)
+        _last_err = None
+        for _host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
+            try:
+                url = f"https://{_host}/v8/finance/chart/{ticker}?interval=1d&range=max"
+                data = _proxy_get(url).json()
+                chart = data.get("chart") or {}
+                results = chart.get("result") or []
+                if not results:
+                    _last_err = f"Empty chart result from {_host}"
+                    continue
+                result = results[0]
+                timestamps = result.get("timestamp", [])
+                closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close", [])
+                df = pd.DataFrame({
+                    "Date": [_dt.datetime.fromtimestamp(t) for t in timestamps],
+                    "Close": closes,
+                }).dropna(subset=["Close"])
+                return df[df["Close"] > 0].reset_index(drop=True)
+            except Exception as _e:
+                _last_err = _e
+        raise RuntimeError(f"Could not fetch history for {ticker}: {_last_err}")
 
     def _get_dividends_wasm(ticker):
         """Fetch dividend events via Yahoo Finance chart API."""
-        url = (
-            f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-            f"?events=dividends&interval=3mo&range=max"
-        )
-        data = _proxy_get(url).json()
-        result = data["chart"]["result"][0]
-        raw_divs = result.get("events", {}).get("dividends", {})
-        if not raw_divs:
-            return pd.DataFrame()
-        rows = [
-            {"Date": _dt.datetime.fromtimestamp(int(k)), "Dividend": v.get("amount", 0)}
-            for k, v in raw_divs.items()
-        ]
-        return pd.DataFrame(rows).sort_values("Date")
+        try:
+            for _host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
+                try:
+                    url = f"https://{_host}/v8/finance/chart/{ticker}?events=dividends&interval=3mo&range=max"
+                    data = _proxy_get(url).json()
+                    chart = data.get("chart") or {}
+                    results = chart.get("result") or []
+                    if not results:
+                        continue
+                    result = results[0]
+                    raw_divs = (result.get("events") or {}).get("dividends") or {}
+                    if not raw_divs:
+                        return pd.DataFrame()
+                    rows = [
+                        {"Date": _dt.datetime.fromtimestamp(int(k)), "Dividend": v.get("amount", 0)}
+                        for k, v in raw_divs.items()
+                    ]
+                    return pd.DataFrame(rows).sort_values("Date")
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return pd.DataFrame()
 
     # ── Shared value formatter ─────────────────────────────────────────────
     def _v(info, key, pct=False, decimals=2):
