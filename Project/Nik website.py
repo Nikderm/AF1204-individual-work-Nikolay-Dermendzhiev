@@ -591,13 +591,21 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
     _is_wasm = _sys.platform == 'emscripten'
 
     # ── CORS-proxy helpers (used when running in browser) ─────────────────
-    _CORS = "https://corsproxy.io/?"
+    # Try multiple free CORS proxies in order until one works
+    _CORS_PROXIES = [
+        lambda u: "https://api.allorigins.win/raw?url=" + _urlparse.quote(u, safe='')
+    ]
 
     def _proxy_get(url):
-        full = _CORS + _urlparse.quote(url, safe='')
-        r = requests.get(full, timeout=15)
-        r.raise_for_status()
-        return r
+        last_err = None
+        for _make_url in _CORS_PROXIES:
+            try:
+                r = requests.get(_make_url(url), timeout=15)
+                r.raise_for_status()
+                return r
+            except Exception as _e:
+                last_err = _e
+        raise RuntimeError(f"All CORS proxies failed: {last_err}")
 
     def _raw(v):
         """Extract .raw from a Yahoo Finance module field dict."""
