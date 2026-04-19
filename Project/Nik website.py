@@ -537,7 +537,7 @@ def _(fig_travel, mo, pd, requests, tab_afklm_credit_risk):
 
 
 @app.cell
-def _(df_airlines, df_final, mo, pd, search_input):
+def _(df_airlines, df_final, finnhub_api_key, mo, pd, search_input):
     # 5d-A: Search Tab — filter & build the results table
     search_query = search_input.value.strip().lower()
 
