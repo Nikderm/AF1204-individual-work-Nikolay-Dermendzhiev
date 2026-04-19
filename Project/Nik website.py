@@ -591,51 +591,66 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
     _is_wasm = _sys.platform == 'emscripten'
 
     # ── CORS-proxy helpers (used when running in browser) ─────────────────
-    # Try multiple free CORS proxies in order until one works
+    # Multiple free proxies tried in order — if one fails, next is used
     _CORS_PROXIES = [
-        lambda u: "https://api.allorigins.win/raw?url=" + _urlparse.quote(u, safe='')
+        lambda u: "https://api.allorigins.win/raw?url="        + _urlparse.quote(u, safe=''),
+        lambda u: "https://api.codetabs.com/v1/proxy?quest="   + _urlparse.quote(u, safe=''),
+        lambda u: "https://thingproxy.freeboard.io/fetch/"     + u,
+        lambda u: "https://cors-anywhere.herokuapp.com/"       + u,
     ]
 
     def _proxy_get(url):
         last_err = None
+        _hdrs = {"User-Agent": "Mozilla/5.0", "Accept": "application/json,*/*"}
         for _make_url in _CORS_PROXIES:
             try:
-                r = requests.get(_make_url(url), timeout=15)
-                r.raise_for_status()
-                return r
+                r = requests.get(_make_url(url), timeout=15, headers=_hdrs)
+                if r.status_code < 400:
+                    return r
+                last_err = f"HTTP {r.status_code}"
             except Exception as _e:
                 last_err = _e
         raise RuntimeError(f"All CORS proxies failed: {last_err}")
 
-    def _raw(v):
-        """Extract .raw from a Yahoo Finance module field dict."""
-        if isinstance(v, dict):
-            return v.get("raw")
-        return v if not isinstance(v, (dict, list)) else None
-
     def _get_info_wasm(ticker):
-        """Fetch company info via Yahoo Finance quoteSummary API through CORS proxy."""
-        modules = "price,summaryDetail,defaultKeyStatistics,financialData,summaryProfile"
-        url = (
-            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
-            f"?modules={modules}&corsDomain=finance.yahoo.com"
-        )
+        """Use Yahoo Finance v7 quote endpoint — no crumb/cookie required."""
+        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={ticker}"
         data = _proxy_get(url).json()
-        result = data["quoteSummary"]["result"][0]
-        info = {}
-        for module_data in result.values():
-            if isinstance(module_data, dict):
-                for k, v in module_data.items():
-                    val = _raw(v)
-                    if val is not None:
-                        info[k] = val
-        return info
+        raw = data["quoteResponse"]["result"][0]
+        # Normalise v7 field names → yfinance-compatible names used by _v()
+        return {
+            "currency":           raw.get("currency", ""),
+            "currentPrice":       raw.get("regularMarketPrice"),
+            "regularMarketPrice": raw.get("regularMarketPrice"),
+            "marketCap":          raw.get("marketCap"),
+            "trailingPE":         raw.get("trailingPE"),
+            "forwardPE":          raw.get("forwardPE"),
+            "trailingEps":        raw.get("epsTrailingTwelveMonths"),
+            "forwardEps":         raw.get("epsForward"),
+            "totalRevenue":       raw.get("revenueTrailingTwelveMonths"),
+            "ebitda":             raw.get("ebitda"),
+            "freeCashflow":       raw.get("freeCashFlow"),
+            "grossMargins":       raw.get("grossMargins"),
+            "profitMargins":      raw.get("profitMargins"),
+            "returnOnEquity":     raw.get("returnOnEquity"),
+            "debtToEquity":       raw.get("debtToEquity"),
+            "totalDebt":          raw.get("totalDebt"),
+            "dividendRate":       raw.get("trailingAnnualDividendRate"),
+            "dividendYield":      raw.get("trailingAnnualDividendYield"),
+            "fiftyTwoWeekHigh":   raw.get("fiftyTwoWeekHigh"),
+            "fiftyTwoWeekLow":    raw.get("fiftyTwoWeekLow"),
+            "beta":               raw.get("beta"),
+            "sharesOutstanding":  raw.get("sharesOutstanding"),
+            "sector":             raw.get("sector", ""),
+            "industry":           raw.get("industry", ""),
+            "longBusinessSummary": raw.get("longBusinessSummary", ""),
+        }
 
     def _get_history_wasm(ticker):
-        """Fetch price history via Yahoo Finance chart API through CORS proxy."""
+        """Fetch price history via Yahoo Finance chart API."""
         url = (
             f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-            f"?interval=1d&range=max&corsDomain=finance.yahoo.com"
+            f"?interval=1d&range=max"
         )
         data = _proxy_get(url).json()
         result = data["chart"]["result"][0]
@@ -648,10 +663,10 @@ def _(mo, pd, pdf_upload, px, requests, search_table, yf):
         return df[df["Close"] > 0].reset_index(drop=True)
 
     def _get_dividends_wasm(ticker):
-        """Fetch dividend events via Yahoo Finance chart API through CORS proxy."""
+        """Fetch dividend events via Yahoo Finance chart API."""
         url = (
             f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-            f"?events=dividends&interval=3mo&range=max&corsDomain=finance.yahoo.com"
+            f"?events=dividends&interval=3mo&range=max"
         )
         data = _proxy_get(url).json()
         result = data["chart"]["result"][0]
