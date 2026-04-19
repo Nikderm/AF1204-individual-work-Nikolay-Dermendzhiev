@@ -185,8 +185,8 @@ def _(df_airlines, df_final, mo):
         ask_button,
         comparison_companies,
         dataset_toggle,
-        pdf_upload,
         finnhub_api_key,
+        pdf_upload,
         risk_threshold,
         search_input,
     )
@@ -624,89 +624,6 @@ def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
                 last_err = _e
         raise RuntimeError(f"All CORS proxies failed: {last_err}")
 
-    def _get_info_wasm(ticker):
-        """Fetch quote info via Yahoo Finance v7, with fallbacks."""
-        _last_err = None
-        for _host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
-            try:
-                url = f"https://{_host}/v7/finance/quote?symbols={ticker}"
-                data = _proxy_get(url).json()
-                results = (data.get("quoteResponse") or {}).get("result") or []
-                if results:
-                    raw = results[0]
-                    return {
-                        "currency":           raw.get("currency", ""),
-                        "currentPrice":       raw.get("regularMarketPrice"),
-                        "regularMarketPrice": raw.get("regularMarketPrice"),
-                        "marketCap":          raw.get("marketCap"),
-                        "trailingPE":         raw.get("trailingPE"),
-                        "forwardPE":          raw.get("forwardPE"),
-                        "trailingEps":        raw.get("epsTrailingTwelveMonths"),
-                        "forwardEps":         raw.get("epsForward"),
-                        "totalRevenue":       raw.get("revenueTrailingTwelveMonths"),
-                        "ebitda":             raw.get("ebitda"),
-                        "freeCashflow":       raw.get("freeCashFlow"),
-                        "grossMargins":       raw.get("grossMargins"),
-                        "profitMargins":      raw.get("profitMargins"),
-                        "returnOnEquity":     raw.get("returnOnEquity"),
-                        "debtToEquity":       raw.get("debtToEquity"),
-                        "totalDebt":          raw.get("totalDebt"),
-                        "dividendRate":       raw.get("trailingAnnualDividendRate"),
-                        "dividendYield":      raw.get("trailingAnnualDividendYield"),
-                        "fiftyTwoWeekHigh":   raw.get("fiftyTwoWeekHigh"),
-                        "fiftyTwoWeekLow":    raw.get("fiftyTwoWeekLow"),
-                        "beta":               raw.get("beta"),
-                        "sharesOutstanding":  raw.get("sharesOutstanding"),
-                        "sector":             raw.get("sector", ""),
-                        "industry":           raw.get("industry", ""),
-                        "longBusinessSummary": raw.get("longBusinessSummary", ""),
-                    }
-                _last_err = f"Empty result from {_host} (keys: {list(data.keys())})"
-            except Exception as _e:
-                _last_err = _e
-        # Fallback: try Finnhub (no CORS issues) when Yahoo returns nothing
-        if finnhub_api_key and finnhub_api_key.value:
-            try:
-                return _get_info_finnhub(ticker, finnhub_api_key.value)
-            except Exception as _fe:
-                _last_err = f"Yahoo failed; Finnhub also failed: {_fe}"
-        # Last resort: pull just the price from the v8/chart meta object
-        try:
-            _chart_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
-            _chart_data = _proxy_get(_chart_url).json()
-            _meta = ((_chart_data.get("chart") or {}).get("result") or [{}])[0].get("meta", {})
-            if _meta.get("regularMarketPrice"):
-                return {
-                    "currency":           _meta.get("currency", ""),
-                    "currentPrice":       _meta.get("regularMarketPrice"),
-                    "regularMarketPrice": _meta.get("regularMarketPrice"),
-                    "marketCap":          None,
-                    "trailingPE":         None,
-                    "forwardPE":          None,
-                    "trailingEps":        None,
-                    "forwardEps":         None,
-                    "totalRevenue":       None,
-                    "ebitda":             None,
-                    "freeCashflow":       None,
-                    "grossMargins":       None,
-                    "profitMargins":      None,
-                    "returnOnEquity":     None,
-                    "debtToEquity":       None,
-                    "totalDebt":          None,
-                    "dividendRate":       None,
-                    "dividendYield":      None,
-                    "fiftyTwoWeekHigh":   _meta.get("fiftyTwoWeekHigh"),
-                    "fiftyTwoWeekLow":    _meta.get("fiftyTwoWeekLow"),
-                    "beta":               None,
-                    "sharesOutstanding":  None,
-                    "sector":             "",
-                    "industry":           "",
-                    "longBusinessSummary": "(Add a Finnhub API key above to see full statistics)",
-                }
-        except Exception:
-            pass
-        raise RuntimeError(f"Could not fetch quote for {ticker}: {_last_err}")
-
     def _get_info_finnhub(ticker, api_key):
         """Fetch key stats from Finnhub using token query param (reliable in browser)."""
         base = "https://finnhub.io/api/v1"
@@ -753,6 +670,90 @@ def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
             "industry":           profile.get("finnhubIndustry", ""),
             "longBusinessSummary": "",
         }
+
+    def _get_info_wasm(ticker):
+        """Fetch quote info — Finnhub first (if key provided), then Yahoo Finance v7."""
+        _last_err = None
+        # ── 1. Finnhub (direct, no CORS proxy needed) — use when key is available ──
+        if finnhub_api_key and finnhub_api_key.value:
+            try:
+                return _get_info_finnhub(ticker, finnhub_api_key.value)
+            except Exception as _fe:
+                _last_err = f"Finnhub: {_fe}"
+        # ── 2. Yahoo Finance v7 via CORS proxy ────────────────────────────────────
+        for _host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
+            try:
+                url = f"https://{_host}/v7/finance/quote?symbols={ticker}"
+                data = _proxy_get(url).json()
+                results = (data.get("quoteResponse") or {}).get("result") or []
+                if results:
+                    raw = results[0]
+                    return {
+                        "currency":           raw.get("currency", ""),
+                        "currentPrice":       raw.get("regularMarketPrice"),
+                        "regularMarketPrice": raw.get("regularMarketPrice"),
+                        "marketCap":          raw.get("marketCap"),
+                        "trailingPE":         raw.get("trailingPE"),
+                        "forwardPE":          raw.get("forwardPE"),
+                        "trailingEps":        raw.get("epsTrailingTwelveMonths"),
+                        "forwardEps":         raw.get("epsForward"),
+                        "totalRevenue":       raw.get("revenueTrailingTwelveMonths"),
+                        "ebitda":             raw.get("ebitda"),
+                        "freeCashflow":       raw.get("freeCashFlow"),
+                        "grossMargins":       raw.get("grossMargins"),
+                        "profitMargins":      raw.get("profitMargins"),
+                        "returnOnEquity":     raw.get("returnOnEquity"),
+                        "debtToEquity":       raw.get("debtToEquity"),
+                        "totalDebt":          raw.get("totalDebt"),
+                        "dividendRate":       raw.get("trailingAnnualDividendRate"),
+                        "dividendYield":      raw.get("trailingAnnualDividendYield"),
+                        "fiftyTwoWeekHigh":   raw.get("fiftyTwoWeekHigh"),
+                        "fiftyTwoWeekLow":    raw.get("fiftyTwoWeekLow"),
+                        "beta":               raw.get("beta"),
+                        "sharesOutstanding":  raw.get("sharesOutstanding"),
+                        "sector":             raw.get("sector", ""),
+                        "industry":           raw.get("industry", ""),
+                        "longBusinessSummary": raw.get("longBusinessSummary", ""),
+                    }
+                _last_err = f"Empty result from {_host} (keys: {list(data.keys())})"
+            except Exception as _e:
+                _last_err = _e
+        # Last resort: pull just the price from the v8/chart meta object
+        try:
+            _chart_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
+            _chart_data = _proxy_get(_chart_url).json()
+            _meta = ((_chart_data.get("chart") or {}).get("result") or [{}])[0].get("meta", {})
+            if _meta.get("regularMarketPrice"):
+                return {
+                    "currency":           _meta.get("currency", ""),
+                    "currentPrice":       _meta.get("regularMarketPrice"),
+                    "regularMarketPrice": _meta.get("regularMarketPrice"),
+                    "marketCap":          None,
+                    "trailingPE":         None,
+                    "forwardPE":          None,
+                    "trailingEps":        None,
+                    "forwardEps":         None,
+                    "totalRevenue":       None,
+                    "ebitda":             None,
+                    "freeCashflow":       None,
+                    "grossMargins":       None,
+                    "profitMargins":      None,
+                    "returnOnEquity":     None,
+                    "debtToEquity":       None,
+                    "totalDebt":          None,
+                    "dividendRate":       None,
+                    "dividendYield":      None,
+                    "fiftyTwoWeekHigh":   _meta.get("fiftyTwoWeekHigh"),
+                    "fiftyTwoWeekLow":    _meta.get("fiftyTwoWeekLow"),
+                    "beta":               None,
+                    "sharesOutstanding":  None,
+                    "sector":             "",
+                    "industry":           "",
+                    "longBusinessSummary": "(Add a Finnhub API key above to see full statistics)",
+                }
+        except Exception:
+            pass
+        raise RuntimeError(f"Could not fetch quote for {ticker}: {_last_err}")
 
     def _get_history_wasm(ticker):
         """Fetch price history via Yahoo Finance chart API."""
