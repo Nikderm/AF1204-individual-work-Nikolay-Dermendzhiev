@@ -707,6 +707,53 @@ def _(finnhub_api_key, mo, pd, pdf_upload, px, requests, search_table, yf):
             pass
         raise RuntimeError(f"Could not fetch quote for {ticker}: {_last_err}")
 
+    def _get_info_finnhub(ticker, api_key):
+        """Fetch key stats from Finnhub using token query param (reliable in browser)."""
+        base = "https://finnhub.io/api/v1"
+        _t = f"token={api_key}"
+        try:
+            profile = requests.get(f"{base}/stock/profile2?symbol={ticker}&{_t}", timeout=10).json()
+        except Exception:
+            profile = {}
+        try:
+            quote = requests.get(f"{base}/quote?symbol={ticker}&{_t}", timeout=10).json()
+        except Exception:
+            quote = {}
+        try:
+            metric_r = requests.get(f"{base}/stock/metric?symbol={ticker}&metric=all&{_t}", timeout=10).json()
+            m = metric_r.get("metric") or {}
+        except Exception:
+            m = {}
+        if not quote.get("c"):
+            raise RuntimeError(f"Finnhub returned no data for {ticker} (profile keys: {list(profile.keys())})")
+        return {
+            "currency":           profile.get("currency", "USD"),
+            "currentPrice":       quote.get("c"),
+            "regularMarketPrice": quote.get("c"),
+            "marketCap":          (profile.get("marketCapitalization") or 0) * 1e6 or None,
+            "trailingPE":         m.get("peBasicExclExtraTTM"),
+            "forwardPE":          m.get("peNormalizedAnnual"),
+            "trailingEps":        m.get("epsBasicExclExtraItemsTTM"),
+            "forwardEps":         None,
+            "totalRevenue":       (m.get("revenueTTM") or 0) * 1e6 if m.get("revenueTTM") else None,
+            "ebitda":             (m.get("ebitdaTTM") or 0) * 1e6 if m.get("ebitdaTTM") else None,
+            "freeCashflow":       (m.get("freeCashFlowTTM") or 0) * 1e6 if m.get("freeCashFlowTTM") else None,
+            "grossMargins":       m.get("grossMarginTTM") / 100 if m.get("grossMarginTTM") is not None else None,
+            "profitMargins":      m.get("netProfitMarginTTM") / 100 if m.get("netProfitMarginTTM") is not None else None,
+            "returnOnEquity":     m.get("roeTTM") / 100 if m.get("roeTTM") is not None else None,
+            "debtToEquity":       m.get("totalDebt/totalEquityQuarterly"),
+            "totalDebt":          (m.get("totalDebtQuarterly") or 0) * 1e6 if m.get("totalDebtQuarterly") else None,
+            "dividendRate":       m.get("dividendsPerShareAnnual"),
+            "dividendYield":      m.get("dividendYieldIndicatedAnnual") / 100 if m.get("dividendYieldIndicatedAnnual") is not None else None,
+            "fiftyTwoWeekHigh":   m.get("52WeekHigh"),
+            "fiftyTwoWeekLow":    m.get("52WeekLow"),
+            "beta":               m.get("beta"),
+            "sharesOutstanding":  (profile.get("shareOutstanding") or 0) * 1e6 or None,
+            "sector":             profile.get("finnhubIndustry", ""),
+            "industry":           profile.get("finnhubIndustry", ""),
+            "longBusinessSummary": "",
+        }
+
     def _get_history_wasm(ticker):
         """Fetch price history via Yahoo Finance chart API."""
         _last_err = None
